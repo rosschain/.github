@@ -646,3 +646,454 @@ This decentralized cross-chain exchange protocol provides a secure, efficient, a
 - **Dynamic Surplus Adjustment**
 
   - Frontend dynamically adjusts surplus percentages based on exchange amounts and number of nodes to ensure gas costs are covered during consensus.
+
+---
+
+# Protocol Visualization with Diagrams
+
+## Key Components Legend
+
+- **Participants**:
+  - **User**: Individual initiating the exchange.
+  - **Frontend**: User interface application.
+  - **Executor Node**: The node selected to execute the exchange.
+  - **Node(s)**: Other nodes participating in consensus.
+  - **EscrowContract**: Smart contract on the escrow chain.
+  - **ChainA**: Escrow chain (e.g., Ethereum).
+  - **ChainB**: Another chain (e.g., Binance Smart Chain).
+  - **Protocol Nodes**: Pre-defined nodes for final dispute resolution.
+
+- **Symbols**:
+  - **Solid Arrow (`->>`)**: Action or message sent.
+  - **Dashed Arrow (`-->>`)**: Response or acknowledgment.
+  - **Note**: Additional information or status.
+  - **Alt Block**: Alternative paths or conditions.
+  - **Loop Block**: Repeated actions.
+  - **Opt Block**: Optional actions.
+
+---
+
+## 1. Successful Exchange from Escrow Chain to Another Chain
+
+### Description
+
+- **Scenario**: User wants to exchange tokens from the escrow chain (**ChainA**) to another chain (**ChainB**).
+- **Outcome**: Exchange completes successfully; all parties fulfill obligations.
+
+### Diagram
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant ExecutorNode
+    participant EscrowContract
+    participant ChainB
+
+    %% Exchange Initiation
+    User->>Frontend: Configures exchange details
+    Frontend->>Frontend: Calculates final exchange rate (includes commissions)
+    Frontend->>User: Displays exchange rate and details
+    User->>EscrowContract: Requests nonce
+    EscrowContract-->>User: Provides nonce
+    User->>Frontend: Signs first EIP-712 message (includes nonce and timestamp)
+    Frontend->>Frontend: Computes Node List Hash
+    Frontend->>Frontend: Calculates ExecutorNode index
+    Frontend->>ExecutorNode: Sends signed message and Node List Hash
+
+    %% Executor Node Processing
+    ExecutorNode->>ExecutorNode: Verifies signature and executor selection
+    ExecutorNode->>ExecutorNode: Checks request validity (timestamp and nonce)
+    ExecutorNode->>ExecutorNode: Assesses financial viability
+    ExecutorNode->>EscrowContract: Submits signed message to lock User's tokens (+1% surplus)
+    EscrowContract-->>ExecutorNode: Confirms locking of tokens
+    ExecutorNode->>ChainB: Transfers equivalent tokens to User's address
+    ChainB-->>User: Tokens received
+
+    %% Unlocking Surplus
+    ExecutorNode->>User: Notifies transfer completion, requests second signature
+    User->>ExecutorNode: Signs second EIP-712 message to unlock surplus
+    ExecutorNode->>EscrowContract: Submits unlock message
+    EscrowContract-->>ExecutorNode: Returns 1% surplus to ExecutorNode
+```
+
+---
+
+## 2. Successful Exchange from Another Chain to Escrow Chain
+
+### Description
+
+- **Scenario**: User wants to exchange tokens from another chain (**ChainB**) to the escrow chain (**ChainA**).
+- **Outcome**: Exchange completes successfully; all parties fulfill obligations.
+
+### Diagram
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant ExecutorNode
+    participant EscrowContract
+    participant ChainB
+
+    %% Exchange Initiation
+    User->>Frontend: Configures exchange details
+    Frontend->>Frontend: Calculates final exchange rate (includes commissions)
+    Frontend->>User: Displays exchange rate and details
+    User->>EscrowContract: Requests nonce
+    EscrowContract-->>User: Provides nonce
+    User->>Frontend: Signs first EIP-712 message (includes nonce and timestamp)
+    Frontend->>Frontend: Computes Node List Hash
+    Frontend->>Frontend: Calculates ExecutorNode index
+    Frontend->>ExecutorNode: Sends signed message and Node List Hash
+
+    %% Executor Node Processing
+    ExecutorNode->>ExecutorNode: Verifies signature and executor selection
+    ExecutorNode->>ExecutorNode: Checks request validity (timestamp and nonce)
+    ExecutorNode->>ExecutorNode: Assesses financial viability
+    ExecutorNode->>EscrowContract: Locks tokens (+1% surplus) in escrow
+    EscrowContract-->>ExecutorNode: Confirms locking
+    ExecutorNode->>User: Requests second signature to authorize token transfer on ChainB
+    User->>ExecutorNode: Signs second EIP-712 message (authorization)
+    ExecutorNode->>ChainB: Submits authorization, transfers tokens from User's balance
+    ExecutorNode->>EscrowContract: Unlocks User's tokens on Escrow Chain
+    EscrowContract-->>User: Tokens received
+    EscrowContract-->>ExecutorNode: Returns 1% surplus to ExecutorNode
+```
+
+---
+
+## 3. Exchange Requiring Consensus (Escrow Chain to Another Chain)
+
+### Description
+
+- **Scenario**: User exchanges from escrow chain to another chain. User fails to sign the second message to unlock surplus.
+- **Outcome**: ExecutorNode initiates consensus; surplus is distributed among participating nodes.
+
+### Diagram
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant ExecutorNode
+    participant Nodes
+    participant EscrowContract
+    participant ChainB
+
+    %% Exchange Initiation (Same as Successful Exchange)
+    User->>Frontend: Configures exchange details
+    Frontend->>User: Displays exchange rate and details
+    User->>EscrowContract: Requests nonce
+    EscrowContract-->>User: Provides nonce
+    User->>Frontend: Signs first EIP-712 message
+    Frontend->>ExecutorNode: Sends signed message
+
+    %% Executor Node Processing (Same as Successful Exchange)
+    ExecutorNode->>EscrowContract: Locks User's tokens (+1% surplus)
+    EscrowContract-->>ExecutorNode: Confirms locking
+    ExecutorNode->>ChainB: Transfers tokens to User's address
+    ChainB-->>User: Tokens received
+
+    %% Failure to Unlock Surplus
+    ExecutorNode->>User: Requests second signature to unlock surplus
+    Note over User: User does not respond within 1 hour
+    ExecutorNode->>Nodes: Initiates consensus process
+    Nodes->>Nodes: Verify exchange details and User's inaction
+    Nodes->>Nodes: Sign consensus indicating User at fault
+    Nodes->>EscrowContract: Submit consensus signatures
+    EscrowContract-->>Nodes: Distributes surplus among consensus participants
+    EscrowContract-->>ExecutorNode: Returns ExecutorNode's portion of surplus
+```
+
+---
+
+## 4. Exchange Requiring Consensus (Another Chain to Escrow Chain)
+
+### Description
+
+- **Scenario**: User exchanges from another chain to escrow chain. ExecutorNode fails to complete token transfer after receiving authorization.
+- **Outcome**: User initiates consensus; surplus is distributed among participating nodes; ExecutorNode may face penalties.
+
+### Diagram
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant ExecutorNode
+    participant Nodes
+    participant EscrowContract
+    participant ChainB
+
+    %% Exchange Initiation (Same as Successful Exchange)
+    User->>Frontend: Configures exchange details
+    Frontend->>User: Displays exchange rate and details
+    User->>EscrowContract: Requests nonce
+    EscrowContract-->>User: Provides nonce
+    User->>Frontend: Signs first EIP-712 message
+    Frontend->>ExecutorNode: Sends signed message
+
+    %% Executor Node Processing
+    ExecutorNode->>EscrowContract: Locks tokens (+1% surplus)
+    EscrowContract-->>ExecutorNode: Confirms locking
+    ExecutorNode->>User: Requests second signature to authorize token transfer on ChainB
+    User->>ExecutorNode: Signs second EIP-712 message (authorization)
+
+    %% Failure to Complete Exchange
+    ExecutorNode->>ExecutorNode: Fails to act within 1 hour
+    User->>Nodes: Initiates consensus process
+    Nodes->>Nodes: Verify exchange details and ExecutorNode's inaction
+    Nodes->>Nodes: Sign consensus indicating ExecutorNode at fault
+    Nodes->>EscrowContract: Submit consensus signatures
+    EscrowContract-->>User: Returns locked tokens
+    EscrowContract-->>Nodes: Distributes surplus among consensus participants
+    Note over ExecutorNode: May face penalties (e.g., stake slashing)
+```
+
+---
+
+## 5. Consensus Escalation Process
+
+### Description
+
+- **Scenario**: Consensus among initial nodes fails; process escalates to higher reliability nodes and eventually to Protocol Nodes.
+- **Outcome**: Dispute is resolved at higher levels; surplus is distributed accordingly.
+
+### Diagram
+
+```mermaid
+sequenceDiagram
+    participant DeceivedParty
+    participant InitialNodes
+    participant HighReliabilityNodes
+    participant ProtocolNodes
+    participant EscrowContract
+
+    %% Initial Consensus Attempt
+    DeceivedParty->>InitialNodes: Initiates consensus
+    InitialNodes->>InitialNodes: Attempt to reach consensus
+    Note over InitialNodes: Consensus not reached within 1 hour
+
+    %% Escalation to High Reliability Nodes
+    DeceivedParty->>HighReliabilityNodes: Initiates consensus
+    HighReliabilityNodes->>HighReliabilityNodes: Attempt to reach consensus
+    Note over HighReliabilityNodes: Consensus not reached within 1 hour
+
+    %% Final Escalation to Protocol Nodes
+    DeceivedParty->>ProtocolNodes: Requests final decision
+    ProtocolNodes->>ProtocolNodes: Review case and reach consensus
+    ProtocolNodes->>EscrowContract: Submit consensus signatures
+    EscrowContract-->>DeceivedParty: Acts based on final consensus
+    EscrowContract-->>ProtocolNodes: Distributes surplus if applicable
+```
+
+---
+
+## 6. Successful Consensus and Surplus Distribution
+
+### Description
+
+- **Scenario**: Consensus is reached among nodes; surplus is distributed to cover gas costs and incentivize participation.
+- **Outcome**: Dispute is resolved promptly; participants receive a share of the surplus.
+
+### Diagram
+
+```mermaid
+sequenceDiagram
+    participant DeceivedParty
+    participant Nodes
+    participant EscrowContract
+
+    %% Consensus Process
+    DeceivedParty->>Nodes: Initiates consensus
+    Nodes->>Nodes: Verify details and reach consensus
+    Nodes->>EscrowContract: Submit consensus signatures
+    EscrowContract-->>DeceivedParty: Releases funds based on consensus
+    EscrowContract-->>Nodes: Distributes surplus among consensus participants
+```
+
+---
+
+## 7. Node Selection and Executor Calculation
+
+### Description
+
+- **Scenario**: Frontend selects active nodes; calculates executor node deterministically.
+- **Outcome**: Executor node is selected transparently; all parties can verify the selection.
+
+### Diagram
+
+```mermaid
+sequenceDiagram
+    participant Frontend
+    participant Nodes
+
+    %% Node Discovery
+    Frontend->>StakingContract: Retrieves list of nodes
+    Frontend->>ENS: Obtains node endpoints
+    Frontend->>Nodes: Pings nodes to confirm activity
+    Nodes-->>Frontend: Respond to ping (active nodes)
+    Frontend->>Frontend: Creates Node Array from active nodes
+
+    %% Executor Calculation
+    Frontend->>Frontend: Computes Node List Hash
+    Frontend->>Frontend: User signs message (EIP-712)
+    Frontend->>Frontend: Calculates ExecutorNode index using:
+    Note over Frontend: executor_index = Hash(signature) mod N
+    Frontend->>ExecutorNode: Identifies ExecutorNode for exchange
+```
+
+---
+
+## 8. User Adjusts Exchange Parameters Due to Executor Unresponsiveness
+
+### Description
+
+- **Scenario**: Executor node is unresponsive; user decides to adjust exchange parameters or select a different node.
+- **Outcome**: User maintains control; can initiate a new exchange.
+
+### Diagram
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant ExecutorNode
+
+    %% Initial Exchange Attempt
+    User->>Frontend: Configures exchange and signs message
+    Frontend->>ExecutorNode: Sends signed message
+    Note over ExecutorNode: Fails to respond within 20 minutes (validity period)
+
+    %% User Adjusts Exchange
+    User->>Frontend: Notices unresponsiveness
+    Frontend->>User: Offers options to adjust exchange
+    User->>Frontend: Adjusts parameters (e.g., node commission, selects different nodes)
+    Frontend->>Frontend: Recalculates executor node
+    User->>Frontend: Signs new EIP-712 message
+    Frontend->>NewExecutorNode: Sends new signed message
+```
+
+---
+
+## 9. Handling Nonce and Timestamp for Replay Protection
+
+### Description
+
+- **Scenario**: User obtains nonce from EscrowContract; includes timestamp in signed message.
+- **Outcome**: Prevents replay attacks; ensures message validity within a time window.
+
+### Diagram
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant EscrowContract
+    participant Frontend
+
+    %% Obtaining Nonce
+    User->>EscrowContract: Requests nonce
+    EscrowContract-->>User: Provides nonce specific to User
+
+    %% Signing Message
+    User->>Frontend: Inputs exchange details
+    Frontend->>User: Prepares message including nonce and timestamp
+    User->>Frontend: Signs EIP-712 message
+    Note over User: Message valid for next 20 minutes
+```
+
+---
+
+## 10. Executor Node Assesses Financial Viability
+
+### Description
+
+- **Scenario**: Executor node evaluates whether executing the exchange is profitable.
+- **Outcome**: Node decides to proceed or decline based on profitability.
+
+### Diagram
+
+```mermaid
+sequenceDiagram
+    participant ExecutorNode
+    participant MarketData
+
+    %% Assessing Exchange
+    ExecutorNode->>ExecutorNode: Verifies signature and request validity
+    ExecutorNode->>MarketData: Fetches current exchange rates
+    ExecutorNode->>ExecutorNode: Calculates potential profit (includes gas fees and commissions)
+
+    %% Decision Making
+    Alt Exchange is profitable
+        ExecutorNode->>ExecutorNode: Proceeds with exchange
+    Else Exchange is not profitable
+        ExecutorNode->>User: Declines exchange (optional)
+    End
+```
+
+---
+
+## 11. Frontend Adjusts Surplus Percentage Dynamically
+
+### Description
+
+- **Scenario**: Frontend adjusts the surplus percentage to ensure consensus participants are incentivized and gas costs are covered.
+- **Outcome**: Exchange parameters are optimized; consensus process remains viable.
+
+### Diagram
+
+```mermaid
+sequenceDiagram
+    participant Frontend
+    participant User
+
+    %% Initial Calculation
+    Frontend->>Frontend: Calculates exchange rate and surplus percentage based on amount and node count
+
+    %% User Interaction
+    Frontend->>User: Displays calculated exchange details
+    User->>Frontend: Adjusts parameters if desired
+
+    %% Dynamic Adjustment
+    Frontend->>Frontend: Recalculates surplus percentage as needed to cover potential consensus costs
+
+    %% Finalization
+    Frontend->>User: Provides updated exchange details
+    User->>Frontend: Confirms and proceeds with exchange
+```
+
+---
+
+## 12. Node Leaves the Network
+
+### Description
+
+- **Scenario**: A node decides to leave the network by zeroing balances, withdrawing stake, and clearing ENS records.
+- **Outcome**: Node is no longer selected for exchanges; ensures network reliability.
+
+### Diagram
+
+```mermaid
+sequenceDiagram
+    participant Node
+    participant StakingContract
+    participant ENS
+
+    %% Node Departure
+    Node->>Node: Zeroes balances on all networks
+    Node->>StakingContract: Withdraws staked tokens
+    Node->>ENS: Deletes 'com.exchange' text record
+    Note over Node: Successfully leaves the network
+
+    %% Network Update
+    Frontend->>ENS: Updates node list
+    Note over Frontend: Node is excluded from future exchanges
+```
+
+---
+
+## Conclusion
+
+These diagrams visualize the detailed workflow of the decentralized cross-chain exchange protocol, covering both successful exchanges and scenarios requiring the consensus mechanism. By illustrating each step and interaction, the diagrams provide a clear understanding of how the protocol functions in various situations, ensuring transparency and trust among all participants.
+
