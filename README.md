@@ -1,492 +1,648 @@
-# **rosschain protocol**
-
-## **Overview**
-
-The proposed protocol enables decentralized, secure, and efficient cross-chain token exchanges between different blockchains. Users can exchange tokens without directly interacting with the blockchain, relying on nodes (executors) to process transactions. The protocol leverages meta-transactions, where users sign messages, and nodes execute them by paying for gas fees, which are covered by commissions included in the exchange rate.
+# Decentralized Cross-Chain Exchange Protocol
 
 ---
 
-## **Key Components**
+## Overview
+
+This protocol enables decentralized, secure, and efficient cross-chain token exchanges between different blockchains. Users can exchange tokens without directly interacting with the blockchain, relying on executor nodes to process transactions. The protocol leverages meta-transactions, where users sign messages using **EIP-712**, and nodes execute them by paying for gas fees, which are covered by commissions included in the exchange rate.
+
+---
+
+## Table of Contents
+
+1. [Key Components and Terminology](#key-components-and-terminology)
+2. [Protocol Workflow](#protocol-workflow)
+   - [1. User Interaction](#1-user-interaction)
+   - [2. Node (Executor) Processing](#2-node-executor-processing)
+   - [3. Escrow Contract Processing](#3-escrow-contract-processing)
+3. [Detailed Steps of the Protocol](#detailed-steps-of-the-protocol)
+   - [A. Exchange from Another Chain to Escrow Chain](#a-exchange-from-another-chain-to-escrow-chain)
+   - [B. Exchange from Escrow Chain to Another Chain](#b-exchange-from-escrow-chain-to-another-chain)
+4. [Consensus Mechanism and Node Interactions](#consensus-mechanism-and-node-interactions)
+5. [Security Considerations](#security-considerations)
+6. [Conclusion](#conclusion)
+7. [Further Considerations](#further-considerations)
+
+---
+
+## Key Components and Terminology
+
+### Components
 
 1. **Users**: Individuals initiating token exchanges.
-2. **Nodes (Executors)**: Stateless functions (e.g., Lambda functions) that process exchange requests, perform blockchain transactions, and participate in consensus.
+2. **Executor Nodes (Nodes)**: Stateless functions (e.g., Lambda functions) that process exchange requests, perform blockchain transactions, and participate in consensus.
 3. **Frontend Interface**: A user-facing application facilitating exchange initiation, message signing, and interaction with the network.
 4. **Smart Contracts**:
    - **Escrow Contracts**: Deployed on specific blockchains (escrow chains) to securely lock and unlock funds based on consensus and transaction validation.
    - **Staking Contract**: Manages the stakes of nodes, serving as collateral against malicious behavior.
-5. **Consensus Mechanism**: A protocol ensuring nodes agree on transaction states, preventing fraud and resolving conflicts.
+5. **Consensus Mechanism**: Ensures nodes agree on transaction states, preventing fraud and resolving conflicts.
+6. **Node Discovery via ENS**: Nodes' endpoints are retrieved using **ENS (Ethereum Name Service)** text records.
+7. **Protocol Nodes**: Pre-defined nodes within the protocol that serve as the final arbiter in dispute resolutions.
 
----
-
-## **Terminology**
+### Terminology
 
 - **Chain**: Any blockchain involved in the exchange. The user can initiate the exchange from any chain, not necessarily the one they want to exchange tokens in.
-- **Escrow Chain**: The blockchain where the escrow contract is deployed. This is selected based on factors like transaction fees and compatibility, and is not always the chain with the lowest fees.
+- **Escrow Chain**: The blockchain where the escrow contract is deployed. This is selected based on factors like transaction fees, compatibility, and support for EVM.
+- **Nonce**: A unique number used once, obtained from the escrow contract for each user, to prevent replay attacks.
+- **Timestamp**: A time limit for the validity of the signed message (e.g., 20 minutes).
 
 ---
 
-## **Protocol Workflow**
+## Protocol Workflow
 
-### **1. User Interaction**
+### 1. User Interaction
 
-#### **Frontend Processes**
+#### Exchange Configuration
 
-- **Exchange Configuration**:
-  - User selects:
-    - **From Chain** and **Token**.
-    - **To Chain** and **Token**.
-    - **Amount** to exchange.
-  - The frontend calculates:
-    - **Average exchange rate** from multiple centralized exchanges via API.
-    - **Total amount** the user will receive after including commissions.
+- **User Selection**:
+  - **From Chain** and **Token**.
+  - **To Chain** and **Token**.
+  - **Amount** to exchange.
 
-- **Node Discovery and Selection**:
-  - The frontend retrieves a list of nodes from the staking contract on the escrow chain.
-  - Nodes are filtered to ensure they have sufficient balances for the exchange.
-  - A **Merkle Tree** of node addresses is generated and included in the request.
-    - The Merkle Tree is essential for:
-      - Determining the executor node via a deterministic hash.
-      - Providing nodes with information on where to send results.
-      - Ensuring consensus among nodes in case of disputes.
+- **Frontend Calculations**:
+  - Retrieves **average exchange rate** from multiple centralized exchanges via API.
+  - Calculates **total amount** the user will receive after including commissions.
+  - **Node Commission**:
+    - User can adjust the percentage to be paid to the node, functioning like **slippage tolerance**.
+    - This percentage is used only on the frontend and is included in the final exchange rate presented to the user.
+  - The **Final Exchange Rate** includes:
+    - Current average exchange rate.
+    - Node commission (customizable by the user).
+    - Protocol commission.
+    - **1% surplus** for unlocking tokens from escrow (if applicable).
 
-- **Message Signing**:
-  - **First Signature**:
-    - User signs a message containing:
-      - Exchange details (amounts, tokens, chains).
-      - Merkle Root of the node list.
-      - Timestamp and nonce.
-      - Any other necessary data for on-chain verification.
-    - Depending on the type of tokens and the exchange direction, the signing method varies:
-      - **For ERC-20 Tokens**: Uses `eth_signTypedData_v4` (EIP-712) to sign structured data.
-      - **For Native Tokens**: Uses `personal_sign` or `eth_signMessage` to sign a message.
-    - This message creates an exchange request and, if necessary, authorizes the transfer of tokens to the escrow contract.
-  - **Second Signature**:
-    - For a safe and complete exchange, the user always signs a second message:
-      - **If exchanging from the escrow chain**:
-        - Authorizes unlocking tokens and returning the 1% surplus.
-      - **If exchanging from the other chain**:
-        - Authorizes spending tokens from the user's balance.
+- **Display to User**:
+  - All calculations and the final exchange rate are transparently shown to the user.
 
-### **2. Node (Executor) Processing**
+#### Node Discovery and Selection
 
-#### **Structure and Deployment**
+- **Retrieve Nodes**:
+  - Frontend retrieves a list of nodes from the staking contract on the escrow chain.
 
-- **Stateless Functions**:
-  - Nodes are stateless Lambda functions written in **Node.js**.
-  - Each node operates via **JSON-RPC** and is invoked through HTTPS requests.
-- **Unique Identity**:
-  - Each node has a unique private key and blockchain address.
-- **Stake Requirement**:
-  - Nodes must stake tokens in a staking contract to participate.
-  - Stakes serve as collateral against malicious behavior.
+- **Filter Nodes**:
+  - Nodes are filtered to ensure they have sufficient balances and are active.
 
-#### **Responsibilities**
+- **Obtain Node Endpoints**:
+  - Nodes' endpoints are obtained from **ENS text records** associated with their addresses.
+  - Example code:
 
-- **Processing Requests**:
-  - Nodes receive exchange requests, including the Merkle Tree of nodes.
-  - Verify exchange details and the user's balance (via blockchain data or trusted APIs).
-  - Ensure the request is within the validity period.
-  - Perform necessary calculations and checks.
-- **Executing Transactions**:
-  - Depending on the exchange direction, nodes execute transactions on the blockchain:
-    - Submit signed messages to the blockchain.
-    - Pay for gas fees (covered by the commission included in the exchange rate).
-- **Broadcasting Results**:
-  - Nodes send results to other nodes specified in the Merkle Tree via HTTPS requests.
-- **Consensus Participation**:
-  - In case of disputes, nodes participate in the consensus mechanism to resolve conflicts.
+    ```javascript
+    import { normalize } from 'viem/ens';
+    import { publicClient } from './client';
 
-### **3. Exchange Scenarios**
+    const ensName = await publicClient.getEnsName({ address: '0xNodeAddress' });
+    const ensText = await publicClient.getEnsText({
+      name: normalize(ensName),
+      key: 'com.exchange',
+    });
+    // ensText contains the node's RPC-JSON URL
+    ```
 
-#### **A. Exchange from Escrow Chain to Another Chain**
+- **Ping Nodes**:
+  - Frontend pings nodes to confirm they are active before including them in the list.
 
-##### **Workflow**
+#### Node List Creation
 
-1. **Exchange Initiation**:
-   - User signs the first message authorizing the transfer of tokens to the escrow contract.
-     - **For ERC-20 Tokens**: Uses `eth_signTypedData_v4`.
-     - **For Native Tokens**: Uses `eth_signMessage`.
-   - Includes the Merkle Tree in the request.
-   - Sends the signed message to a node, which broadcasts it.
+- **Node Array**:
+  - An array of node addresses is created from the active nodes.
 
-2. **Executor Node Selection**:
-   - Determined via the deterministic hash of the signed message and Merkle Root.
+- **Node List Hash**:
+  - The array of node addresses is hashed to produce a **Node List Hash**.
+  - This hash will be used for verification by nodes and the escrow contract.
 
-3. **Executor Node Processing**:
-   - Submits the user's signed message to the escrow contract on the **Escrow Chain**, locking the user's tokens (amount + 1% surplus).
-     - Escrow contract performs complex checks to ensure:
-       - Transaction data matches exactly.
-       - The executor is authorized.
-       - The amount is correct.
-   - Verifies the successful locking before proceeding.
+#### Executor Node Calculation
 
-4. **Executor Completes Exchange**:
-   - Transfers the equivalent tokens to the user's address on the **Chain**.
-   - After the user confirms receipt, they sign the second message to unlock their 1% surplus from escrow.
-     - This message is sent directly to the executor.
-   - Executor submits this message to the escrow contract, releasing the surplus back to the user.
+- **Deterministic Selection**
 
-#### **B. Exchange from Another Chain to Escrow Chain**
+  - The executor node is determined using a deterministic algorithm based on the user's signature and the Node List Hash.
 
-##### **Workflow**
+- **Algorithm**
 
-1. **Exchange Initiation**:
-   - User signs the first message (exchange request).
-     - **For ERC-20 Tokens**: Uses `eth_signTypedData_v4`.
-     - **For Native Tokens**: Uses `eth_signMessage`.
-   - Includes the Merkle Tree in the request.
-   - Sends the signed message to a node, which broadcasts it.
+  - Compute a hash using the user's signature:
 
-2. **Executor Node Selection**:
-   - Determined via a deterministic hash of the signed message and Merkle Root.
+    ```plaintext
+    executor_index = Hash(signature) mod N
+    ```
 
-3. **Executor Node Processing**:
-   - Verifies the request and the user's balance.
-   - Locks tokens (amount + 1% surplus) in the escrow contract on the **Escrow Chain**.
-     - Escrow contract performs complex checks to ensure:
-       - Transaction data matches exactly.
-       - The executor is authorized.
-       - The amount is correct.
+    - **Hash Function**: A secure hash function like SHA-256 or Keccak-256.
+    - **N**: Total number of nodes in the array.
 
-4. **User Authorization**:
-   - User signs the second message authorizing the executor to spend tokens from their balance on the **Chain**.
-     - **For ERC-20 Tokens**: Uses `eth_signTypedData_v4`.
-     - **For Native Tokens**: Uses `eth_signMessage`.
-   - This message includes necessary data (e.g., nonce from the escrow contract) and is sent directly to the executor.
+  - **Example Code**:
 
-5. **Executor Completes Exchange**:
-   - Submits the signed message to the blockchain, transferring tokens from the user's balance to the executor's address.
-   - Unlocks the user's tokens from the escrow contract on the **Escrow Chain**.
-   - Receives the 1% surplus as compensation.
+    ```solidity
+    // Solidity example
+    function deterministicIndex(bytes memory signature, uint256 totalAddresses) public pure returns (uint256) {
+        bytes32 hash = keccak256(signature);
+        return uint256(hash) % totalAddresses;
+    }
+    ```
+
+  - **Verification**
+
+    - Since the node list and the algorithm are known, all parties (user, frontend, nodes, escrow contract) can independently calculate and verify the selected executor node.
+
+#### Message Signing
+
+- **First Signature**
+
+  - User signs an **EIP-712** message containing:
+
+    - **Exchange Details**: Amounts, tokens, from chain, to chain.
+    - **Node List Hash**: Hash of the node array.
+    - **Nonce**: Obtained from the escrow contract for each user.
+    - **Timestamp**: To limit the validity time of the signed message (e.g., 20 minutes).
+    - Any other necessary data for on-chain verification.
+
+  - **Note**: The node commission percentage is **not** included in the signed message; it is only used on the frontend for exchange rate calculation.
+
+- **Second Signature**
+
+  - For a safe and complete exchange, the user always signs a second message:
+
+    - **If exchanging from the escrow chain**:
+
+      - Authorizes unlocking tokens and returning the 1% surplus.
+
+    - **If exchanging from another chain**:
+
+      - Authorizes spending tokens from the user's balance.
+
+#### Sending the Request
+
+- **Direct Communication**
+
+  - Since the executor node is known, the frontend can send the request directly to the executor.
+
+- **Alternate Communication**
+
+  - Alternatively, the frontend can send the request to any node from the node array.
+
+  - Other nodes, upon receiving the request, can calculate the executor and deliver the request to the executor node.
+
+### 2. Node (Executor) Processing
+
+#### Upon Receiving Data
+
+- **Verify the User's Signature**
+
+  - Validate the **EIP-712** signed message for authenticity and integrity.
+
+- **Verify Executor Selection**
+
+  - Recompute the executor index using the received signature and Node List Hash.
+
+  - Confirm that they are indeed the selected executor node.
+
+- **Request Validity**
+
+  - Check timestamp to ensure the request is within the validity period (e.g., 20 minutes).
+
+  - Check nonce obtained from the escrow contract to prevent replay attacks.
+
+- **Balance Verification**
+
+  - Ensure that the node has sufficient balances on both chains to perform the exchange.
+
+#### Assess Financial Viability
+
+- **Exchange Rate Verification**
+
+  - Evaluate the final exchange rate, including node and protocol commissions.
+
+- **Profitability Check**
+
+  - Determine if executing the exchange is financially beneficial based on current market rates and gas fees.
+
+  - Node decides whether to proceed based on their own criteria.
+
+#### Executing Transactions
+
+- **On the Escrow Chain**
+
+  - If required, lock tokens (amount + 1% surplus) in the escrow contract.
+
+- **On the Other Chain**
+
+  - Submit the user's signed authorization to transfer tokens.
+
+  - Pay for gas fees, which are covered by the commissions.
+
+#### Communication with the User
+
+- **Request Second Signature**
+
+  - If necessary, request the user to sign the second **EIP-712** message (e.g., to authorize token transfer or unlock surplus).
+
+- **Provide Updates**
+
+  - Inform the user about the status of the exchange.
+
+### 3. Escrow Contract Processing
+
+#### Upon Receiving Data
+
+- **Verify the User's Signature**
+
+  - Validate the EIP-712 signed message.
+
+- **Verify Executor Authorization**
+
+  - Recalculate the executor index using the user's signature and Node List Hash.
+
+  - Confirm that the executor is authorized to perform the operation.
+
+- **Transaction Data Verification**
+
+  - Ensure that all transaction data matches exactly:
+
+    - Amounts.
+
+    - Tokens.
+
+    - Chains involved.
+
+    - Nonce and timestamp.
+
+- **Amount Verification**
+
+  - Check that the amounts are correct, including the 1% surplus if applicable.
+
+- **Preventing Replay Attacks**
+
+  - Use nonces and timestamps to prevent replay of messages.
+
+#### Locking and Unlocking Funds
+
+- **Lock Funds**
+
+  - Upon successful verification, lock the tokens in escrow.
+
+- **Unlock Funds**
+
+  - Unlock tokens upon receiving the second signed message from the user or based on consensus outcomes.
+
+#### Dispute Handling
+
+- Acts upon consensus results from nodes in case of disputes.
+
+- Enforces penalties such as forfeiting the surplus or returning funds to the appropriate party.
 
 ---
 
-## **Merkle Tree and Node Communication**
+## Detailed Steps of the Protocol
 
-- **Merkle Tree Transmission**:
-  - The Merkle Tree is included with each request.
-  - Nodes use it to:
-    - Verify the list of authorized nodes.
-    - Know where to send results or participate in consensus.
-- **Node Communication**:
-  - Nodes communicate via HTTPS requests to the endpoints specified in the Merkle Tree.
-  - Since nodes are stateless, they rely on data in the requests and do not store information between invocations.
-  - This approach suits Lambda functions that operate via JSON-RPC.
+### A. Exchange from Another Chain to Escrow Chain
+
+#### 1. Exchange Initiation
+
+- **User Actions**
+
+  - Configures exchange details on the frontend.
+
+  - Adjusts node commission percentage if desired.
+
+  - Frontend calculates the final exchange rate.
+
+  - User signs the first **EIP-712** message containing:
+
+    - Exchange details.
+
+    - Node List Hash.
+
+    - Nonce obtained from the escrow contract.
+
+    - Timestamp (validity period).
+
+- **Frontend Actions**
+
+  - Retrieves nodes and constructs the node array.
+
+  - Pings nodes to confirm availability.
+
+  - Calculates the executor node based on the signature and Node List Hash.
+
+  - Sends the signed request directly to the executor node.
+
+#### 2. Node (Executor) Processing
+
+- **Verification**
+
+  - Verifies the user's signature.
+
+  - Verifies executor selection.
+
+  - Checks request validity (timestamp and nonce).
+
+- **Assess Financial Viability**
+
+  - Evaluates exchange rates and potential profit.
+
+  - Decides whether to proceed based on profitability.
+
+- **Locks Tokens in Escrow Contract**
+
+  - Sends tokens (amount + 1% surplus) to the escrow contract.
+
+- **Escrow Contract Verifications**
+
+  - Validates the transaction as described in the [Escrow Contract Processing](#3-escrow-contract-processing) section.
+
+  - Confirms successful locking.
+
+- **Requests Second Signature from User**
+
+  - User signs the second **EIP-712** message authorizing the executor to transfer tokens from their balance on the other chain.
+
+  - User sends the signed message directly to the executor.
+
+- **Executor Completes Exchange**
+
+  - Submits the signed authorization to transfer tokens on the other chain.
+
+  - Unlocks the user's tokens from the escrow contract on the escrow chain.
+
+  - Receives the 1% surplus as compensation.
+
+#### 3. User Receives Tokens
+
+- **On the Escrow Chain**
+
+  - User's tokens are unlocked and transferred to their address.
+
+### B. Exchange from Escrow Chain to Another Chain
+
+#### 1. Exchange Initiation
+
+- **User Actions**
+
+  - Configures exchange details on the frontend.
+
+  - Adjusts node commission percentage if desired.
+
+  - Frontend calculates the final exchange rate.
+
+  - User signs the first **EIP-712** message containing:
+
+    - Exchange details.
+
+    - Node List Hash.
+
+    - Nonce obtained from the escrow contract.
+
+    - Timestamp (validity period).
+
+  - This message includes authorization to transfer tokens to the escrow contract.
+
+- **Frontend Actions**
+
+  - Retrieves nodes and constructs the node array.
+
+  - Pings nodes to confirm availability.
+
+  - Calculates the executor node.
+
+  - Sends the signed request directly to the executor node.
+
+#### 2. Node (Executor) Processing
+
+- **Verification**
+
+  - Verifies the user's signature.
+
+  - Verifies executor selection.
+
+  - Checks request validity (timestamp and nonce).
+
+- **Assesses Financial Viability**
+
+  - Evaluates exchange rates and potential profit.
+
+  - Decides whether to proceed based on profitability.
+
+- **Submits User's Signed Message to Escrow Contract**
+
+  - Locks the user's tokens (amount + 1% surplus) in the escrow contract.
+
+- **Escrow Contract Verifications**
+
+  - Validates the transaction.
+
+  - Confirms successful locking.
+
+- **Executor Completes Exchange**
+
+  - Transfers the equivalent tokens to the user's address on the other chain.
+
+- **Requests Second Signature from User**
+
+  - Notifies the user of the transfer and requests the unlock message.
+
+#### 3. User Unlocks Surplus
+
+- **User Signs Second Message**
+
+  - Authorizes the executor to retrieve the 1% surplus from the escrow contract.
+
+  - Sends the signed message directly to the executor.
+
+- **Executor Retrieves Surplus**
+
+  - Submits the unlock message to the escrow contract.
+
+  - Receives the surplus as compensation.
+
+#### 4. User Receives Tokens
+
+- **On the Other Chain**
+
+  - User receives the tokens transferred by the executor.
 
 ---
 
-## **Escrow Contract**
+## Consensus Mechanism and Node Interactions
 
-- **Deployment**:
-  - Deployed on the **Escrow Chain**, which is selected based on factors like transaction fees and compatibility.
-- **Functionality**:
-  - Performs complex checks of signed messages to ensure:
-    - Transaction data matches exactly.
-    - The executor is authorized.
-    - The amount is correct, no more or less.
-  - Locks and unlocks funds based on transaction progress and consensus outcomes.
-- **Verification**:
-  - Uses on-chain verification to confirm that the signed messages are valid.
-  - Validates that the executor node is correctly selected based on the Merkle Root and the deterministic hash.
-- **Dispute Handling**:
-  - Acts upon consensus results from nodes in case of disputes.
+### Executor Node Calculation
+
+- **Algorithm**
+
+  ```plaintext
+  executor_index = Hash(signature) mod N
+  ```
+
+  - **Hash Function**: A secure hash function like Keccak-256.
+
+  - **N**: Total number of nodes in the array.
+
+- **Verification**
+
+  - All parties can independently calculate and verify the executor node using this algorithm.
+
+### Node Checks Upon Receiving Data
+
+- **Signature Verification**
+
+  - Validate the EIP-712 signatures for authenticity and integrity.
+
+- **Data Integrity**
+
+  - Ensure that the transaction details match the signed message.
+
+- **Executor Verification**
+
+  - Confirm that they are the selected executor node.
+
+- **Request Validity**
+
+  - Check timestamp (within 20 minutes).
+
+  - Verify nonce with the escrow contract.
+
+- **Profitability Assessment**
+
+  - Evaluate the financial benefits of executing the exchange.
+
+### Escrow Contract Checks Upon Receiving Data
+
+- **Signature Verification**
+
+  - Validate the EIP-712 signatures.
+
+- **Executor Authorization**
+
+  - Verify that the executor is authorized based on the Node List Hash and deterministic hash calculation.
+
+- **Transaction Data Verification**
+
+  - Confirm that the transaction details match exactly.
+
+- **Amount Verification**
+
+  - Ensure the amounts are correct, including any surplus.
+
+- **Preventing Replay Attacks**
+
+  - Use nonces and timestamps.
+
+### Handling Unresponsive Nodes
+
+- **Executor Node Unresponsive**
+
+  - If the executor node is unresponsive or fails to act within the validity period (e.g., 20 minutes):
+
+    - **User Decides Next Steps**
+
+      - User may choose to initiate a new exchange with updated parameters.
+
+- **Failed Exchange After Initial Execution**
+
+  - If the exchange is not completed within 1 hour, the deceived party (user or executor) can initiate the consensus mechanism.
+
+### Consensus Mechanism
+
+#### Timeframes
+
+- **0-1 Hour**: The exchange must be completed successfully.
+
+- **1-2 Hours**: The deceived party initiates consensus among nodes from the executor's array (excluding the executor node).
+
+- **2-3 Hours**: If consensus is not reached, the deceived party can initiate consensus with an array of higher reliability and reputation nodes.
+
+- **After 3 Hours**: If consensus is still not reached, protocol nodes specified in the contract decide the consensus.
+
+#### Participants
+
+- **Consensus Nodes**
+
+  - Nodes from the node array participate in the consensus process (excluding the executor node).
+
+#### Motivation
+
+- **Incentive for Participation**
+
+  - Nodes are motivated to participate in consensus to receive a share of the 1% surplus.
+
+#### Process
+
+- **Sequential Communication**
+
+  - Nodes are stateless lambdas; after a node signs its response, it sends it to another node.
+
+- **Reaching Consensus**
+
+  - As soon as a node has a majority of signatures indicating a decision, it can submit the consensus to the escrow contract.
+
+- **Gas Costs**
+
+  - The cost of submitting consensus to the blockchain is covered by a portion of the surplus.
+
+  - The frontend adjusts the surplus percentage to ensure the fee is fully covered.
+
+#### Outcome
+
+- **Escrow Contract Acts Based on Consensus**
+
+  - Funds are released according to the consensus decision.
+
+- **Surplus Distribution**
+
+  - If one party does not complete the exchange, the 1% surplus is equally divided among the consensus participants.
 
 ---
 
-## **Consensus Mechanism**
+## Security Considerations
 
-- **Triggering Event**:
-  - If an exchange is not completed within a specified timeframe (e.g., 1 hour), the consensus mechanism is initiated.
-- **Participants**:
-  - Nodes listed in the Merkle Tree for that exchange.
-- **Voting Process**:
-  - Nodes independently verify the transaction history.
-  - Nodes sign messages indicating whether the user or executor is at fault.
-- **Consensus Threshold**:
-  - Typically, a two-thirds majority is required to make a decision.
-- **On-Chain Enforcement**:
-  - The aggregated consensus is submitted to the escrow contract.
-  - The contract verifies signatures and acts accordingly.
-  - Malicious nodes can have their stakes slashed if they make unfair decisions.
-- **Preventing Unfair Consensus**:
-  - Nodes are incentivized to act honestly due to staking.
-  - Malicious behavior leads to stake slashing and loss of reputation.
+- **Staking and Slashing**
 
----
-
-## **Meta-Transactions and EIPs**
-
-- **Meta-Transactions**:
-  - Users sign messages authorizing actions.
-  - Nodes execute these messages on-chain, paying for gas fees.
-  - This allows users to interact without holding native tokens for gas.
-- **Relevant EIPs**:
-  - **EIP-712**: Defines a standard for typed structured data hashing and signing.
-    - Used for `eth_signTypedData_v4` when authorizing ERC-20 token transfers.
-  - **EIP-2612**: Adds `permit` function to ERC-20 tokens for gasless approvals (relevant for tokens that support it).
-  - **Personal Sign (eth_signMessage)**:
-    - Used when authorizing transfers of native tokens (e.g., ETH).
-
----
-
-## **Security Considerations**
-
-- **Staking and Slashing**:
   - Nodes must stake tokens as collateral.
-  - Malicious nodes risk losing their stake.
-- **Data Integrity**:
-  - All messages are signed and verified using digital signatures.
+
+  - Malicious behavior results in stake slashing.
+
+- **Data Integrity**
+
+  - Use of EIP-712 ensures messages are authentic and unaltered.
+
+- **Replay Protection**
+
   - Nonces and timestamps prevent replay attacks.
-- **Fault Tolerance**:
-  - The network can handle node failures through redundancy and consensus.
-- **Reputation System**:
-  - Nodes build reputation based on successful exchanges.
-  - Reputation affects node selection and trustworthiness.
+
+- **Transparency**
+
+  - All calculations and selections are transparent and verifiable by all parties.
+
+- **Fault Tolerance**
+
+  - The protocol handles unresponsive nodes and disputes through consensus mechanisms and escalation to Protocol Nodes.
+
+- **User Control**
+
+  - Users have control over the exchange process and can adjust parameters like node commission.
 
 ---
 
-## **Technologies Used**
+## Conclusion
 
-- **Blockchain Platforms**:
-  - **Chains**: Any EVM-compatible blockchain (e.g., Ethereum, Avalanche, Binance Smart Chain, Arbitrum).
-  - **Escrow Chain**: Selected based on transaction fees and compatibility; not necessarily the chain with the lowest fees.
-- **Smart Contracts**:
-  - Written in **Solidity**.
-  - Include the **Escrow Contract** and **Staking Contract**.
-- **Frontend Technologies**:
-  - **React 19 RC** with **shadcn/ui** and **tailwindcss**.
-  - **wagmi v2** for blockchain interactions.
-  - **Axios** or **Fetch API** for API calls.
-- **Nodes (Executors)**:
-  - Written in **Node.js**.
-  - Deployed as stateless Lambda functions.
-- **Communication Protocols**:
-  - **HTTPS Requests** via **JSON-RPC**.
-  - Nodes use endpoints provided in the Merkle Tree.
-- **Cryptography**:
-  - **ECDSA** for digital signatures.
-  - **Merkle Trees** for efficient verification.
+This decentralized cross-chain exchange protocol provides a secure, efficient, and user-friendly method for exchanging tokens across different blockchains. By utilizing EIP-712 for all signatures and a deterministic executor node selection based on the user's signature and node array, the protocol ensures transparency and verifiability at all stages. Nodes are incentivized to act honestly, and the system is robust against malicious behavior and failures.
 
 ---
 
-## **Scenarios and Resolutions with Diagrams**
+## Further Considerations
 
-### **Scenario 1: User Does Not Sign Second Message**
+- **Scalability**
 
-#### **Description**
+  - The protocol can scale by adding more nodes and optimizing communication pathways.
 
-- **Context**:
-  - **Exchange Direction**: From another chain to the escrow chain.
-  - Executor has locked tokens in escrow on the **Escrow Chain**.
-  - User does not sign the second message authorizing the executor to spend tokens from their balance on the other chain.
+- **User Education**
 
-#### **Resolution**
+  - Educating users on the importance of carefully reviewing signing prompts and understanding the process.
 
-1. **Timeout Trigger**:
-   - After 1 hour, the executor initiates the consensus mechanism.
+- **Open Source Development**
 
-2. **Consensus Process**:
-   - Nodes verify that the user did not provide the necessary authorization.
-   - Nodes sign messages indicating that the user is at fault.
+  - Encouraging community involvement for improvements and audits.
 
-3. **Escrow Action**:
-   - Escrow contract receives the consensus.
-   - Executor retrieves their locked tokens and receives the 1% surplus.
-   - User does not receive the exchanged tokens.
+- **Regulatory Compliance**
 
-#### **Diagram**
+  - Ensuring compliance with financial regulations in relevant jurisdictions.
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant Executor
-    participant Nodes
-    participant EscrowContract
+- **Dynamic Surplus Adjustment**
 
-    Executor->>User: Requests second signature (authorization)
-    Note over User: User does not respond
-    Executor->>Nodes: Initiates consensus after timeout
-    Nodes->>Nodes: Verify lack of user authorization
-    Nodes->>EscrowContract: Submit consensus (User at fault)
-    EscrowContract->>Executor: Returns locked tokens + surplus
-    EscrowContract->>User: Exchange cancelled
-```
-
----
-
-### **Scenario 2: Executor Cannot Spend User's Tokens**
-
-#### **Description**
-
-- **Context**:
-  - **Exchange Direction**: From another chain to the escrow chain.
-  - Executor has locked tokens in escrow on the **Escrow Chain**.
-  - Executor cannot spend the user's tokens because the user did not provide a valid second signature or provided an incorrect one.
-
-#### **Resolution**
-
-- This scenario is effectively the same as Scenario 1 because the executor cannot proceed without the user's valid second signature.
-
-1. **Timeout Trigger**:
-   - After 1 hour, the executor initiates the consensus mechanism.
-
-2. **Consensus Process**:
-   - Nodes verify that the user did not provide a valid second signature.
-   - Nodes sign messages indicating that the user is at fault.
-
-3. **Escrow Action**:
-   - Escrow contract receives the consensus.
-   - Executor retrieves their locked tokens and receives the 1% surplus.
-   - User does not receive the exchanged tokens.
-
-#### **Diagram**
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Executor
-    participant Nodes
-    participant EscrowContract
-
-    Executor->>User: Requests valid second signature
-    Note over User: User provides invalid or incorrect signature
-    Executor->>Nodes: Initiates consensus after timeout
-    Nodes->>Nodes: Verify invalid signature provided
-    Nodes->>EscrowContract: Submit consensus (User at fault)
-    EscrowContract->>Executor: Returns locked tokens + surplus
-    EscrowContract->>User: Exchange cancelled
-```
-
----
-
-### **Scenario 3: User Does Not Sign Unlock Message**
-
-#### **Description**
-
-- **Context**:
-  - **Exchange Direction**: From escrow chain to another chain.
-  - Executor has transferred tokens to the user on the other chain.
-  - User does not sign the second message to unlock their surplus from escrow.
-
-#### **Resolution**
-
-1. **Timeout Trigger**:
-   - After 1 hour, the executor initiates the consensus mechanism.
-
-2. **Consensus Process**:
-   - Nodes verify that the executor completed the transfer.
-   - Nodes confirm that the user did not sign the unlock message.
-   - Nodes sign messages indicating that the user is at fault.
-
-3. **Escrow Action**:
-   - Escrow contract receives the consensus.
-   - Executor retrieves the 1% surplus from escrow.
-   - User forfeits their surplus.
-
-#### **Diagram**
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Executor
-    participant Nodes
-    participant EscrowContract
-
-    Executor->>User: Notifies transfer completion, requests unlock signature
-    Note over User: User does not respond
-    Executor->>Nodes: Initiates consensus after timeout
-    Nodes->>Nodes: Verify executor's transfer and lack of user response
-    Nodes->>EscrowContract: Submit consensus (User at fault)
-    EscrowContract->>Executor: Returns 1% surplus
-    EscrowContract->>User: Surplus forfeited
-```
-
----
-
-### **Successful Transaction Diagrams**
-
-#### **A. Successful Exchange from Escrow Chain to Another Chain**
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Frontend
-    participant Executor
-    participant EscrowContract
-    participant OtherChain
-
-    User->>Frontend: Configures exchange and signs initial message (includes authorization)
-    Frontend->>Executor: Sends signed request (includes Merkle Tree)
-    Executor->>EscrowContract: Submits user's signed message (locks user's tokens + 1% surplus)
-    EscrowContract-->>Executor: Confirms successful locking
-    Executor->>OtherChain: Transfers tokens to User's address
-    OtherChain-->>User: Receives tokens
-    Executor->>User: Notifies transfer completion, requests unlock signature
-    User->>Executor: Sends signed unlock message
-    Executor->>EscrowContract: Unlocks surplus
-    EscrowContract->>User: Returns 1% surplus
-```
-
-#### **B. Successful Exchange from Another Chain to Escrow Chain**
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Frontend
-    participant Executor
-    participant EscrowContract
-    participant OtherChain
-
-    User->>Frontend: Configures exchange and signs initial message (exchange request)
-    Frontend->>Executor: Sends signed request (includes Merkle Tree)
-    Executor->>Executor: Verifies request and user's balance
-    Executor->>EscrowContract: Locks tokens (+1% surplus)
-    EscrowContract-->>Executor: Confirms successful locking
-    User->>Executor: Signs second message authorizing token transfer
-    Executor->>OtherChain: Submits user's signed message to transfer tokens
-    Executor->>EscrowContract: Unlocks User's tokens
-    EscrowContract->>User: Transfers tokens to User
-    EscrowContract->>Executor: Returns 1% surplus
-```
-
----
-
-## **Ensuring Practical Implementability**
-
-- **Data Inclusion in Signed Messages**:
-  - Use of `eth_signTypedData_v4` and `eth_signMessage` allows inclusion of structured data, which can be verified on-chain.
-- **Node Availability and Balances**:
-  - Frontend selects nodes with sufficient balances from the staking contract.
-- **Stateless Node Operation**:
-  - Nodes operate in an event-driven manner without persistent storage.
-- **Exchange Splitting**:
-  - Large exchanges are split into smaller amounts to match node capacities.
-- **User Without Gas Tokens**:
-  - Users do not need native tokens for gas fees; nodes cover gas costs and are compensated through commissions.
-- **Meta-Transaction Implementation**:
-  - For **ERC-20 Tokens**:
-    - Use EIP-2612 `permit` function if available.
-    - Otherwise, use custom smart contracts to handle approvals via signed messages.
-  - For **Native Tokens**:
-    - Use custom smart contracts that allow users to sign messages authorizing the transfer of native tokens.
-    - Nodes execute these messages on-chain, verifying signatures within the contract.
-
----
-
-## **Conclusion**
-
-The decentralized cross-chain exchange protocol provides a secure, efficient, and user-friendly method for token exchanges across different blockchains. By utilizing meta-transactions, users can participate without holding native gas tokens. The protocol's design ensures fairness through staking, consensus mechanisms, and detailed verification processes. Nodes are incentivized to act honestly, and the system is robust against malicious behavior.
-
----
-
-## **Further Considerations**
-
-- **Regulatory Compliance**:
-  - The protocol should consider compliance with relevant financial regulations in jurisdictions where it operates.
-- **User Education**:
-  - Users should be informed about the importance of keeping their private keys secure and the implications of signing messages.
-- **Open Source Development**:
-  - Open sourcing the protocol's code can enhance transparency and encourage community contributions.
-- **Continuous Auditing**:
-  - Regular security audits of smart contracts and the protocol to ensure safety against new vulnerabilities.
-
+  - Frontend dynamically adjusts surplus percentages based on exchange amounts and number of nodes to ensure gas costs are covered during consensus.
